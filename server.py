@@ -3,13 +3,15 @@ import json
 import threading
 import os
 from db import MiniDB
+import base64
+
 
 IMAGES_FOLDER="photo"
 IMAGES_DB="images.txt"
 RATINGS_DB="ratings.txt"
 
 images=MiniDB(['id','path'], IMAGES_DB)
-RATINGS_DB=MiniDB(['ip','image','rating'], RATINGS_DB)
+ratings=MiniDB(['ip','image','rating'], RATINGS_DB)
 
 CLEAN_ON_START = False
 if CLEAN_ON_START:
@@ -18,7 +20,7 @@ if CLEAN_ON_START:
 
 def scan_image(path):
     result=[]
-    for p in os.litdir(path):
+    for p in os.listdir(path):
         full_path = os.path.join(path,p)
         if (p.lower().endswith('.png') or (p.lower().endswith('.jpg'))) and os.path.isfile(full_path):
             result.append(full_path)
@@ -45,7 +47,25 @@ def update_user_position(user,shift,default_value):
     return new_index
 
 def get_image_response(user, record, action):
-    pass
+    image_path = record['path']
+    try:
+        with open(image_path,'rb') as img_file:
+            image_bytes = img_file.read()
+    except Exception as e:
+        return {'status':"error","error":f"{e}"}
+    b64_data=base64.b64encode(image_bytes).decode('utf-8')
+    current_rating=0
+    for r in ratings.data:
+        if r['ip'] == user and r['image'] == record['id']:
+            current_rating = int(r['rating'])
+    return{
+        'status':'ok',
+        "action":action,
+        "image":b64_data,
+        "id":record['id'],
+        "path":image_path,
+        'current_rating':current_rating
+    }
 
 def command(action):
     def decorator(func):
@@ -66,8 +86,23 @@ def cmd_next(user,request):
     return get_image_response(user,record, "get_prev")
 
 @command("rate")
-def cmd_rate(yser, request):
-    pass
+def cmd_rate(user, request):
+    image_id=request.get('image')
+    rating_value=request.get('rating')
+    if image_id is None or rating_value is None:
+        return{
+            "status":'error',
+            "error":'incorrect request'
+        }
+    rating_found=False
+    for r in ratings.data:
+         if r['ip'] == user and int(r['image']) == int(image_id):
+             r['rating'] = rating_value
+             rating_found=True
+             break
+    if not rating_found:
+        ratings.add((user,image_id,rating_value))
+    return{'status':'ok',"action":"rate"}
 
 def handle_client(client_socket, address):
     user_id=address[0]
@@ -85,7 +120,7 @@ def handle_client(client_socket, address):
         pass
 
 def start_server():
-    server = server.socket(socket.AF_INET, socket.SOCK_STREAM)
+    server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     server.bind((HOST, PORT))
     server.listen(10)
     print(f"server is listening on port {PORT}")
